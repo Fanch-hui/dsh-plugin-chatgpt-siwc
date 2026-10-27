@@ -1,0 +1,88 @@
+name: Publish npm package
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: npm-release
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Verify and package
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out the tagged source
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - name: Set up Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '24'
+          registry-url: https://registry.npmjs.org/
+          cache: npm
+      - name: Require a public source repository
+        env:
+          REPOSITORY_PRIVATE: ${{ github.event.repository.private }}
+        run: test "$REPOSITORY_PRIVATE" = false
+      - name: Set public package links
+        run: |
+          npm pkg set repository.type=git \
+            "repository.url=git+https://github.com/${GITHUB_REPOSITORY}.git" \
+            "homepage=https://github.com/${GITHUB_REPOSITORY}#readme" \
+            "bugs.url=https://github.com/${GITHUB_REPOSITORY}/issues"
+      - name: Install dependencies
+        run: npm ci
+      - name: Typecheck
+        run: npm run typecheck
+      - name: Test
+        run: npm test
+      - name: Build and audit the package
+        run: npm run check:release
+      - name: Match the tag to the stable package version
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: node scripts/check-package.mjs "$RELEASE_TAG"
+      - name: Pack the audited artifacts
+        run: |
+          mkdir -p .release
+          npm pack --ignore-scripts --pack-destination .release
+      - name: Preserve the audited package
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: npm-package
+          path: .release/*.tgz
+          if-no-files-found: error
+          retention-days: 7
+
+  publish:
+    name: Publish the verified package
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: npm
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Set up Node.js for trusted publishing
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '24'
+          registry-url: https://registry.npmjs.org/
+      - name: Install an OIDC-capable npm CLI
+        run: npm install --global npm@11 --registry=https://registry.npmjs.org/
+      - name: Download the audited package
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: npm-package
+          path: .release
+      - name: Publish through npm trusted publishing
+        run: npm publish .release/*.tgz --access public --tag latest --provenance --ignore-scripts --registry=https://registry.npmjs.org/
