@@ -4,11 +4,16 @@
 
 ## 兼容与交付状态
 
-- 插件版本：0.9.2，供桌面实机验收。
+- 插件版本：0.9.3，供桌面实机验收。
 - DSH 运行时：精确匹配 `0.2.1-rc.3`，源码基线 `dsh-v0.2.1-rc.3`。
 - Node.js：22 或以上。
 - 已验证：核心回归与额度界面针对测试、TypeScript、构建、真实 Cordis/DSH 网关注册与卸载、本地 WebSocket 服务端及客户端工厂、独立 Codex RPC 启动与进程异常清理。
 - 待手动验证：真实 SIWC 额度兼容性、独立 Codex 登录和额度、多账号浏览器登录、切换后的模型请求、macOS 桌面完整流程、Windows x64 桌面流程及凭据 ACL、真实双进程续期。
+
+### 0.9.3 版本说明
+
+- 修正 GitHub Actions 从隐藏输出目录上传安装包的配置，上传范围保持为已审计的 `.tgz` 文件。
+- 提供仅构建验证的手动工作流，正式版本仍经过测试、包审计和发布审批。
 
 ### 0.9.2 版本说明
 
@@ -29,7 +34,7 @@ dsh-plugin-chatgpt-siwc
 
 按宿主提示完成安装并启用 **DSH ChatGPT SIWC**；需要重启时按提示重启。当前兼容 DSH `0.2.1-rc.3`，请先核对桌面版本。
 
-需要离线分发或本地验收时，可在插件管理页面安装维护者提供的 `dsh-plugin-chatgpt-siwc-0.9.2.tgz`。开发者可通过下方开发命令构建打包。
+需要离线分发或本地验收时，可在插件管理页面安装维护者提供的 `dsh-plugin-chatgpt-siwc-0.9.3.tgz`。开发者可通过下方开发命令构建打包。
 
 ### 更新
 
@@ -40,7 +45,7 @@ dsh-plugin-chatgpt-siwc
 确认桌面正在使用的 `DSH_HOME` 和 profile 后，通过同版本 CLI 安装本地包，例如在包所在目录执行：
 
 ```sh
-dsh plugin --profile <桌面实际使用的profile名称> add ./dsh-plugin-chatgpt-siwc-0.9.2.tgz
+dsh plugin --profile <桌面实际使用的profile名称> add ./dsh-plugin-chatgpt-siwc-0.9.3.tgz
 ```
 
 插件的安装位置必须与桌面 profile 一致。CLI 安装前请从桌面设置核对 profile，避免安装到另一套环境。
