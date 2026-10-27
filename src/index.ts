@@ -46,6 +46,9 @@ export default class ChatGPTSiwc extends TypertRemoteService {
   connectCodexQuota() { return this.controller.connectCodexQuota() }
   cancelCodexQuota() { return this.controller.cancelCodexQuota() }
   disconnectCodexQuota() { return this.controller.disconnectCodexQuota() }
+  addCodexQuota() { return this.controller.addCodexQuota() }
+  selectCodexQuota(id: string) { return this.controller.selectCodexQuota(id) }
+  removeCodexQuota(id: string) { return this.controller.removeCodexQuota(id) }
   setContextWindow(setting: ContextWindowSetting) { return this.controller.setContextWindow(setting) }
   setCacheSettings(settings: CacheSettings) { return this.controller.setCacheSettings(settings) }
   queryDiagnostics(filter: DiagnosticsFilter) { return this.controller.queryDiagnostics(filter) }

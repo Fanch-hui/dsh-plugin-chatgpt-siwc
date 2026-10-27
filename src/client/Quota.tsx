@@ -12,14 +12,17 @@ const hint: CSSProperties = { fontSize: 12, lineHeight: 1.6, color: secondary, m
 
 export function Quota({controller, status, pending, refreshing, error}: {controller: SiwcController; status: SiwcStatus; pending?: string; refreshing?: boolean; error?: string}) {
   useEffect(() => controller.watchQuota(), [controller])
-  const [confirmDisconnect, setConfirmDisconnect] = useState(false)
+  const [confirmation, setConfirmation] = useState<{action: 'disconnect' | 'remove'; id?: string}>()
   const codex = status.quota?.codex
+  const accounts = status.quota?.accounts
+  const selectedId = status.quota?.selectedAccountId
   const connecting = codex?.state === 'connecting'
   const busy = Boolean(pending) || status.signingIn
   const connected = Boolean(codex?.snapshot || codex?.email || codex?.state === 'ready')
-  let connectionAction = <Button size="sm" variant="outline" disabled={busy} onClick={() => { void controller.run('connectCodexQuota') }}>连接 Codex 查看额度</Button>
-  if (connecting) connectionAction = <Button size="sm" disabled={Boolean(pending)} onClick={() => { void controller.run('cancelCodexQuota') }}>取消登录</Button>
-  else if (connected) connectionAction = <Button size="sm" variant="ghost" disabled={busy} onClick={() => { setConfirmDisconnect(true) }}>退出额度连接</Button>
+  useEffect(() => { setConfirmation(undefined) }, [selectedId])
+  const bound = accounts?.find(account => account.linkedToCurrent)
+  const boundIndex = accounts?.findIndex(account => account.linkedToCurrent) ?? -1
+  const activeAccount = status.accounts.find(account => account.id === status.activeAccountId)
   return <section aria-label="订阅额度" style={{borderTop: border, padding: '24px 0'}}>
     <div style={{...row, justifyContent: 'space-between', marginBottom: 16}}>
       <h3 style={{fontSize: 14, fontWeight: 600, margin: 0}}>订阅额度</h3>
@@ -29,22 +32,48 @@ export function Quota({controller, status, pending, refreshing, error}: {control
     </div>
     {error && <p role="status" style={hint}>{error}</p>}
     <div style={{display: 'grid', gap: 12}}>
-      <div style={{...row, justifyContent: 'space-between', columnGap: 20}}>
-        <div style={{minWidth: 0, flex: '1 1 240px'}}>
-          <h4 style={{fontSize: 13, fontWeight: 500, margin: 0}}>Codex 额度 · 独立连接</h4>
-          {codex?.email && <p style={{...hint, marginTop: 4, overflowWrap: 'anywhere'}}>{codex.email}{codex.planType ? ` · ${codex.planType}` : ''}</p>}
-        </div>
-        <div style={row}>{connectionAction}</div>
+      {accounts && accounts.length > 0 && <div style={row}>
+        <label htmlFor="dsh-siwc-quota-account" style={{fontSize: 13}}>额度账号</label>
+        <select id="dsh-siwc-quota-account" value={selectedId ?? ''} disabled={busy}
+          onChange={event => { if (event.target.value) void controller.run('selectCodexQuota', event.target.value) }}
+          style={{color: 'inherit', background: 'var(--dsw-alias-bg-base, transparent)', border, borderRadius: 6, padding: '6px 10px', font: 'inherit', minWidth: 180, maxWidth: '100%'}}>
+          <option value="" disabled>选择额度账号</option>
+          {accounts.map((account, index) => <option key={account.id} value={account.id}>
+            {account.email ?? `额度账号 ${index + 1}`}{account.planType ? ` · ${account.planType}` : ''}{account.linkedToCurrent ? ' · 已关联' : ''}{account.state === 'connecting' ? ' · 登录中' : ''}
+          </option>)}
+        </select>
+      </div>}
+      {bound && <p style={hint}>当前聊天账号{activeAccount?.email ? ` ${activeAccount.email}` : ''}关联：{bound.email ?? `额度账号 ${boundIndex + 1}`}</p>}
+      {!accounts && codex?.email && <p style={hint}>{codex.email}{codex.planType ? ` · ${codex.planType}` : ''}</p>}
+      <div style={row}>
+        {connecting
+          ? <Button size="sm" disabled={Boolean(pending)} onClick={() => { void controller.run('cancelCodexQuota') }}>取消登录</Button>
+          : <>
+            <Button size="sm" variant="outline" disabled={busy}
+              onClick={() => { void controller.run(accounts ? 'addCodexQuota' : 'connectCodexQuota') }}>添加额度账号</Button>
+            {selectedId && !connected && <Button size="sm" variant="ghost" disabled={busy}
+              onClick={() => { void controller.run('connectCodexQuota') }}>登录所选账号</Button>}
+            {connected && <Button size="sm" variant="ghost" disabled={busy}
+              onClick={() => { setConfirmation({action: 'disconnect', id: selectedId}) }}>退出登录</Button>}
+            {selectedId && <Button size="sm" variant="ghost" disabled={busy}
+              onClick={() => { setConfirmation({action: 'remove', id: selectedId}) }}>删除账号</Button>}
+          </>}
       </div>
       {connecting && <p role="status" style={hint}>请在浏览器中完成 Codex 登录。</p>}
-      {!connected && !connecting && <p style={hint}>登录后显示该 Codex 账号的额度，聊天账号仍在上方选择。</p>}
+      {!connected && !connecting && !accounts?.length && <p style={hint}>添加额度账号后，可将它关联到当前聊天账号。</p>}
       <QuotaAssociation controller={controller} status={status} busy={busy || Boolean(refreshing)} />
-      {codex?.snapshot && <Snapshot snapshot={codex.snapshot} label="Codex 独立连接" />}
+      {codex?.snapshot && <Snapshot snapshot={codex.snapshot} label="所选额度账号" />}
       {codex?.error && <p role="status" style={hint}>{codex.error}</p>}
-      {confirmDisconnect && <div style={row} role="group" aria-label="确认退出额度连接">
-        <span style={{...hint, flex: '1 1 220px'}}>确认退出此 Codex 额度连接？</span>
-        <Button size="sm" variant="ghost" disabled={busy} onClick={() => { setConfirmDisconnect(false) }}>取消</Button>
-        <Button size="sm" variant="outline" disabled={busy} onClick={() => { setConfirmDisconnect(false); void controller.run('disconnectCodexQuota') }}>确认退出</Button>
+      {confirmation && <div style={row} role="group" aria-label={confirmation.action === 'remove' ? '确认删除额度账号' : '确认退出额度连接'}>
+        <span style={{...hint, flex: '1 1 220px'}}>{confirmation.action === 'remove' ? '删除此额度账号并解除它的关联？' : '退出此额度账号并解除它的关联？'}</span>
+        <Button size="sm" variant="ghost" disabled={busy} onClick={() => { setConfirmation(undefined) }}>取消</Button>
+        <Button size="sm" variant="outline" disabled={busy || confirmation.id !== selectedId} onClick={() => {
+          const action = confirmation.action
+          const id = confirmation.id
+          setConfirmation(undefined)
+          if (action === 'remove' && id) void controller.run('removeCodexQuota', id)
+          else if (action === 'disconnect') void controller.run('disconnectCodexQuota')
+        }}>{confirmation.action === 'remove' ? '确认删除' : '确认退出'}</Button>
       </div>}
     </div>
   </section>

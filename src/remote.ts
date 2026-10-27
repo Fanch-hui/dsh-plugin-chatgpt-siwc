@@ -20,10 +20,13 @@ const quotaSnapshot = z.strictObject({
   })),
 })
 const quotaFields = {snapshot: quotaSnapshot.optional(), error: z.string().optional()}
+const codexQuotaFields = {...quotaFields, state: z.enum(['disconnected', 'connecting', 'ready', 'unavailable']),
+  email: z.string().optional(), planType: z.string().optional(), sourceKey: z.string().regex(/^[a-f0-9]{64}$/).optional(),
+  persistentLink: z.boolean().optional(), linkedToCurrent: z.boolean().optional()}
 const quotaSchema = z.strictObject({
-  codex: z.strictObject({...quotaFields, state: z.enum(['disconnected', 'connecting', 'ready', 'unavailable']),
-    email: z.string().optional(), planType: z.string().optional(), sourceKey: z.string().regex(/^[a-f0-9]{64}$/).optional(),
-    persistentLink: z.boolean().optional(), linkedToCurrent: z.boolean().optional()}),
+  codex: z.strictObject({...codexQuotaFields, id: identifier.optional()}),
+  accounts: z.array(z.strictObject({...codexQuotaFields, id: identifier})).max(128).optional(),
+  selectedAccountId: identifier.optional(),
   current: z.strictObject({...quotaFields, state: z.enum(['ready', 'unavailable']),
     source: z.literal('linked-codex')}).optional(),
 })
@@ -110,6 +113,9 @@ const descriptors: readonly InvocationDescriptor[] = [
   method('connectCodexQuota'),
   method('cancelCodexQuota'),
   method('disconnectCodexQuota'),
+  method('addCodexQuota'),
+  method('selectCodexQuota', {name: 'id', codec: codec('string', identifier)}),
+  method('removeCodexQuota', {name: 'id', codec: codec('string', identifier)}),
   method('beginSignIn'),
   method('addAccount'),
   method('switchAccount', { name: 'accountId', codec: codec('string', identifier) }),

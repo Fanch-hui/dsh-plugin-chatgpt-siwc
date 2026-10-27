@@ -37,6 +37,9 @@ export interface SiwcRemote {
   connectCodexQuota(): Promise<SiwcStatus>
   cancelCodexQuota(): Promise<SiwcStatus>
   disconnectCodexQuota(): Promise<SiwcStatus>
+  addCodexQuota(): Promise<SiwcStatus>
+  selectCodexQuota(id: string): Promise<SiwcStatus>
+  removeCodexQuota(id: string): Promise<SiwcStatus>
   addAccount(): Promise<SiwcStatus>
   switchAccount(accountId: string): Promise<SiwcStatus>
   removeAccount(accountId: string): Promise<SiwcStatus>

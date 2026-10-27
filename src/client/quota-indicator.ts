@@ -12,7 +12,9 @@ export interface QuotaIndicatorView {
 export function quotaIndicator(status: SiwcStatus, model?: string): QuotaIndicatorView {
   const current = status.quota?.current
   const snapshot = current?.snapshot
-  if (!snapshot) return {windows: [], message: '请在插件设置中关联额度。'}
+  if (!snapshot) return {windows: [], message: current
+    ? (current.error ?? '额度暂不可用，请在插件设置中刷新。')
+    : '请在插件设置中关联额度。'}
   const modelBucket = model ? snapshot.buckets.find(bucket => bucket.model === model || bucket.id === model) : undefined
   const shared = snapshot.buckets.find(bucket => bucket.id === 'codex')
   const only = snapshot.buckets.length === 1 && !snapshot.buckets[0].model ? snapshot.buckets[0] : undefined

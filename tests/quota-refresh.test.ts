@@ -144,3 +144,38 @@ test('an in-flight action defers automatic refresh until it completes', async t 
   await settle()
   assert.equal(refreshes, 2)
 })
+
+test('switching quota sources on the same chat account refreshes the selected source', async t => {
+  t.mock.timers.enable({apis: ['Date', 'setInterval', 'setTimeout'], now: 0})
+  const f = fixture()
+  t.after(() => f.controller.dispose())
+  const selected = (id: string): SiwcStatus => ({...status(), quota: {selectedAccountId: id,
+    accounts: [{id, state: 'ready', sourceKey: id}], codex: {state: 'ready', sourceKey: id}}})
+  f.setStatus(selected('quota-a'))
+  f.controller.watchQuota()
+  await f.controller.run('status')
+  await settle()
+  assert.equal(f.refreshes, 1)
+  f.setStatus(selected('quota-b'))
+  await f.controller.run('status')
+  await settle()
+  assert.equal(f.refreshes, 2)
+})
+
+test('a background login for another quota account does not block the bound account refresh', async t => {
+  t.mock.timers.enable({apis: ['Date', 'setInterval', 'setTimeout'], now: 0})
+  const f = fixture()
+  t.after(() => f.controller.dispose())
+  f.setStatus({...status(), quota: {selectedAccountId: 'quota-a',
+    codex: {state: 'ready', sourceKey: 'source-a', linkedToCurrent: true},
+    accounts: [{id: 'quota-a', state: 'ready', sourceKey: 'source-a', linkedToCurrent: true},
+      {id: 'quota-b', state: 'connecting'}],
+    current: {state: 'ready', source: 'linked-codex', snapshot: {updatedAt: 1, buckets: []}}}})
+  f.controller.watchQuota()
+  await f.controller.run('status')
+  await settle()
+  assert.equal(f.refreshes, 1)
+  t.mock.timers.tick(60_000)
+  await settle()
+  assert.equal(f.refreshes, 2)
+})

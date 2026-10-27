@@ -50,9 +50,24 @@ export class QuotaLinks {
     return this.loading ??= readLinks(this.filename).then(links => { this.persistent = links })
   }
 
+  reload(): Promise<void> {
+    const next = this.queue.then(async () => {
+      try { this.persistent = await readLinks(this.filename) }
+      catch (error) { this.persistent.clear(); throw error }
+    })
+    this.queue = next.catch(() => {})
+    this.loading = next
+    return next
+  }
+
   matches(accountId: string, sourceKey: string): boolean {
     if (!hash.safeParse(accountId).success || !hash.safeParse(sourceKey).success) return false
     return (this.ephemeral.get(accountId) ?? this.persistent.get(accountId)) === sourceKey
+  }
+
+  singlePersistentSource(): string | undefined {
+    const sources = new Set(this.persistent.values())
+    return sources.size === 1 ? sources.values().next().value : undefined
   }
 
   bind(accountId: string, sourceKey: string, persistent: boolean): Promise<void> {
@@ -70,6 +85,24 @@ export class QuotaLinks {
   unlink(accountId: string): Promise<void> {
     if (!hash.safeParse(accountId).success) return Promise.reject(new Error(formatError))
     return this.change(links => { links.delete(accountId) }, () => { this.ephemeral.delete(accountId) })
+  }
+
+  unlinkMatching(accountId: string, sourceKey: string): Promise<void> {
+    if (!hash.safeParse(accountId).success || !hash.safeParse(sourceKey).success) return Promise.reject(new Error(formatError))
+    return this.change(links => {
+      if (links.get(accountId) === sourceKey) links.delete(accountId)
+    }, () => {
+      if (this.ephemeral.get(accountId) === sourceKey) this.ephemeral.delete(accountId)
+    })
+  }
+
+  clearSource(sourceKey: string): Promise<void> {
+    if (!hash.safeParse(sourceKey).success) return Promise.reject(new Error(formatError))
+    return this.change(links => {
+      for (const [accountId, source] of links) if (source === sourceKey) links.delete(accountId)
+    }, () => {
+      for (const [accountId, source] of this.ephemeral) if (source === sourceKey) this.ephemeral.delete(accountId)
+    })
   }
 
   clear(): Promise<void> {

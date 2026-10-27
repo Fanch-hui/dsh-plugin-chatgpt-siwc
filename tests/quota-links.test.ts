@@ -129,3 +129,18 @@ test('the binding limit also covers temporary associations without changing comm
     assert.equal(await readFile(value.filename, 'utf8'), serialized)
   } finally { await value.close() }
 })
+
+test('invalidating one quota source preserves unrelated associations and newer bindings', async () => {
+  const value = await fixture()
+  try {
+    const links = new QuotaLinks(value.root)
+    await links.bind(account, source, true)
+    await links.bind(other, temporary, true)
+    await links.clearSource(source)
+    assert.equal(links.matches(account, source), false)
+    assert.equal(links.matches(other, temporary), true)
+    await links.bind(account, temporary, true)
+    await links.unlinkMatching(account, source)
+    assert.equal(links.matches(account, temporary), true)
+  } finally { await value.close() }
+})

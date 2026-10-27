@@ -99,7 +99,7 @@ test('real Cordis Host registers strict Remote methods and releases routing on d
     assert.deepEqual(ctx.llm.listProviders().map(provider => provider.id), ['chatgpt-siwc'])
     assert.deepEqual(ctx.typert.getPackage(REMOTE_PACKAGE, 'host')?.model,
       { services: [], events: [], objects: [] })
-    assert.equal(ctx.typert.local.list().filter(item => item.namespace === REMOTE_NAMESPACE).length, 22)
+    assert.equal(ctx.typert.local.list().filter(item => item.namespace === REMOTE_NAMESPACE).length, 25)
     const descriptor = ctx.typert.local.get(`${REMOTE_NAMESPACE}/status`)
     assert.equal(descriptor?.service, REMOTE_NAMESPACE)
     assert.equal(descriptor?.result.mode, 'strict')
@@ -111,6 +111,12 @@ test('real Cordis Host registers strict Remote methods and releases routing on d
 
     await assert.rejects(invoke('status', { accessToken: 'fixture-unknown-field' }))
     await assert.rejects(invoke('setBackgroundAllowed', { allowed: 'true' }))
+    for (const method of ['selectCodexQuota', 'removeCodexQuota']) {
+      const route = ctx.typert.local.get(`${REMOTE_NAMESPACE}/${method}`)
+      assert.equal(route?.parameters[0]?.name, 'id')
+      await assert.rejects(invoke(method, {id: ''}))
+      await assert.rejects(invoke(method, {id: 'fixture-quota', extra: 'fixture-unexpected'}))
+    }
     assert.equal(statusSchema.parse(await invoke('status')).allowBackground, true)
     assert.equal(statusSchema.parse(await invoke('setBackgroundAllowed', { allowed: true })).allowBackground, true)
     assert.deepEqual(statusSchema.parse(await invoke('setCacheSettings', { settings: { ttl: '30m', comparisonDiagnostics: true } })).cacheSettings,
@@ -208,5 +214,28 @@ test('real Host diagnostics queries filter all retained records through the stri
   } finally {
     await peer.dispose()
     await ctx.fiber.dispose()
+  }
+})
+
+test('strict quota projection carries separate selected and bound accounts without credential fields', () => {
+  const source = 'a'.repeat(64)
+  const other = 'b'.repeat(64)
+  const base = {
+    accounts: [], authenticated: false, signingIn: false, planEnabled: false,
+    availability: 'ready', models: [], authorizedSessions: [], allowBackground: true,
+    usage: {requests: 0, inputTokens: 0, outputTokens: 0, cachedTokens: 0},
+  }
+  const snapshot = {updatedAt: 123, buckets: []}
+  const selected = {id: 'fixture-selected', state: 'ready', sourceKey: source, snapshot, linkedToCurrent: false}
+  const bound = {id: 'fixture-bound', state: 'ready', sourceKey: other, snapshot, linkedToCurrent: true}
+  const quota = {codex: selected, accounts: [selected, bound], selectedAccountId: selected.id,
+    current: {source: 'linked-codex', state: 'ready', snapshot}}
+  const parsed = statusSchema.parse({...base, quota})
+  assert.equal(parsed.quota?.accounts?.find(account => account.linkedToCurrent)?.id, bound.id)
+  assert.equal(parsed.quota?.selectedAccountId, selected.id)
+  assert.equal(parsed.quota?.current?.snapshot?.updatedAt, 123)
+  for (const field of ['accessToken', 'authUrl', 'refreshToken', 'home']) {
+    assert.equal(statusSchema.safeParse({...base, quota: {...quota,
+      accounts: [{...bound, [field]: 'fixture-sensitive-field'}]}}).success, false)
   }
 })

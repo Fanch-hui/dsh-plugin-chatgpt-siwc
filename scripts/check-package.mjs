@@ -8,7 +8,7 @@ const packageFiles = ['lib', 'cordis.patch.yml', 'README.md', 'PRIVACY.md', 'REL
 const requiredFiles = ['package.json', 'cordis.patch.yml', 'README.md', 'PRIVACY.md', 'RELEASING.md', 'LICENSE',
   'lib/index.js', 'lib/index.d.ts', 'lib/client.js', 'lib/remote.js', 'lib/remote.d.ts']
 const forbiddenPath = /(?:^|\/)(?:\.env(?:\..*)?|\.npmrc|\.credentials[^/]*|auth\.json|AGENTS\.md|chatgpt-siwc-[^/]*\.json|[^/]*\.(?:pem|key|tgz|log|map))$/i
-const privateDirectory = /(?:^|\/)(?:\.git|\.dsh|\.release|node_modules|chatgpt-siwc-codex-quota)(?:\/|$)/i
+const privateDirectory = /(?:^|\/)(?:\.git|\.dsh|\.release|node_modules|chatgpt-siwc-codex-quota(?:-accounts)?)(?:\/|$)/i
 
 function isForbiddenPath(path) {
   return forbiddenPath.test(path) || privateDirectory.test(path)

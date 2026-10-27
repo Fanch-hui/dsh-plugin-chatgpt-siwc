@@ -32,6 +32,13 @@ test('temporary failures preserve window values and mark the data as stale', () 
   assert.equal(result.stale, true)
   assert.equal(result.updatedAt, snapshot.updatedAt)
 })
+test('a bound account awaiting its first quota read keeps its association state', () => {
+  const status: SiwcStatus = {...base, quota: {codex: {state: 'disconnected'},
+    current: {source: 'linked-codex', state: 'unavailable'}}}
+  assert.equal(quotaIndicator(status).message, '额度暂不可用，请在插件设置中刷新。')
+  status.quota!.current!.error = '额度连接中断，请重新连接。'
+  assert.equal(quotaIndicator(status).message, '额度连接中断，请重新连接。')
+})
 test('selects an exact model bucket or an unambiguous shared bucket', () => {
   const buckets = [{id: 'special', model: 'fixture-model', windows: [{windowDurationMins: 300, usedPercent: 50}]},
     {id: 'codex', windows: [{windowDurationMins: 300, usedPercent: 10}]}]

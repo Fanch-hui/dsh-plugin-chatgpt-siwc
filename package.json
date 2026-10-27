@@ -1,6 +1,6 @@
 {
   "name": "dsh-plugin-chatgpt-siwc",
-  "version": "0.9.3",
+  "version": "0.9.4",
   "type": "module",
   "scripts": {
     "typecheck": "tsc --noEmit",

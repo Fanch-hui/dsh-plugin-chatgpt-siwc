@@ -217,3 +217,46 @@ test('diagnostic query transport failures propagate without overwriting account 
   await assert.rejects(controller.queryDiagnostics({}), error => error === failure)
   assert.equal(controller.getSnapshot(), before)
 })
+
+function selectedQuota(id: string) {
+  return {selectedAccountId: id, accounts: [{id, state: 'ready' as const, sourceKey: id}],
+    codex: {state: 'ready' as const, sourceKey: id}}
+}
+
+test('switching the selected quota account discards an earlier quota refresh', async t => {
+  const previous = deferred()
+  const a = {...initial, quota: selectedQuota('quota-a')}
+  const b = {...initial, quota: selectedQuota('quota-b')}
+  let selected: string | undefined
+  const controller = new SiwcController({
+    async status() { return value(a) },
+    refreshQuota() { return previous.promise },
+    async selectCodexQuota(id: string) { selected = id; return value(b) },
+  } as unknown as RemoteFace)
+  t.after(() => controller.dispose())
+  await controller.run('status')
+  const reading = controller.run('refreshQuota')
+  await controller.run('selectCodexQuota', 'quota-b')
+  previous.resolve(value(a))
+  await reading
+  assert.equal(selected, 'quota-b')
+  assert.deepEqual(controller.getSnapshot().status?.quota, b.quota)
+})
+
+test('a quota refresh for an externally changed source cannot restore the previous source', async t => {
+  const previous = deferred()
+  const a = {...initial, quota: selectedQuota('quota-a')}
+  const b = {...initial, quota: selectedQuota('quota-b')}
+  let reads = 0
+  const controller = new SiwcController({
+    async status() { return value(++reads === 1 ? a : b) },
+    refreshQuota() { return previous.promise },
+  } as unknown as RemoteFace)
+  t.after(() => controller.dispose())
+  await controller.run('status')
+  const reading = controller.run('refreshQuota')
+  await controller.run('status')
+  previous.resolve(value(a))
+  await reading
+  assert.deepEqual(controller.getSnapshot().status?.quota, b.quota)
+})

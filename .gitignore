@@ -12,6 +12,7 @@ dsh-chatgpt-siwc-plan.md
 auth.json
 chatgpt-siwc-*.json
 chatgpt-siwc-codex-quota/
+chatgpt-siwc-codex-quota-accounts/
 *.log
 *.pem
 *.key

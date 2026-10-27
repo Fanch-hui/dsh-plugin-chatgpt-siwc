@@ -8,7 +8,7 @@ export function QuotaAssociation({controller, status, busy}: {controller: SiwcCo
   const accountId = status.activeAccountId
   const sourceKey = codex?.sourceKey
   const [confirmation, setConfirmation] = useState<QuotaLinkSetting>()
-  useEffect(() => { setConfirmation(undefined) }, [accountId, sourceKey])
+  useEffect(() => { setConfirmation(undefined) }, [accountId, sourceKey, status.quota?.selectedAccountId])
   if (!accountId || !status.authenticated || !sourceKey || !codex?.snapshot) return null
   const account = status.accounts.find(value => value.id === accountId)
   if (codex.linkedToCurrent) return <div style={{display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap'}}>

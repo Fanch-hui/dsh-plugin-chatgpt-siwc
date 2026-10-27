@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
+import { createHash } from 'node:crypto'
 import test from 'node:test'
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { CredentialKey, CredentialProvider, CredentialRecord } from '@deepseek-ai/dsh-credentials'
@@ -84,9 +85,9 @@ async function fixture(signedIn = true) {
     async close() { await service.dispose(); await rm(profile, {recursive: true, force: true}) }}
 }
 async function settled(check: () => boolean): Promise<void> {
-  for (let i = 0; i < 20; i++) {
+  for (let i = 0; i < 100; i++) {
     if (check()) return
-    await new Promise(resolve => setImmediate(resolve))
+    await new Promise(resolve => setTimeout(resolve, 5))
   }
   assert.fail('Fixture operation did not settle')
 }
@@ -191,7 +192,7 @@ test('quota logout invalidates the association and reconnect requires a new conf
   } finally { await value.close() }
 })
 
-test('temporary quota errors retain the associated snapshot and mark it unavailable', async () => {
+test('temporary quota and RPC restart failures retain the associated snapshot', async () => {
   const value = await fixture()
   try {
     value.rpc.account = {type: 'chatgpt', email: 'codex@example.invalid', planType: 'pro'}
@@ -206,22 +207,41 @@ test('temporary quota errors retain the associated snapshot and mark it unavaila
     assert.match(status.current?.error!, /读取失败/)
     assert.doesNotMatch(JSON.stringify(status), /fixture-private-rpc-error/)
     assert.equal(value.rpc.closed, true)
+    const home = join(value.profile, 'chatgpt-siwc-codex-quota')
+    await mkdir(home, {recursive: true})
+    await writeFile(join(home, 'auth.json'), '{}')
+    value.dependencies.start = async () => { throw new Error('fixture-restart-failure') }
+    await value.service.refresh()
+    const failedRestart = value.service.status(value.id)
+    assert.deepEqual(failedRestart.current?.snapshot, before)
+    assert.equal(failedRestart.current?.state, 'unavailable')
+    assert.match(failedRestart.current?.error!, /无法启动/)
+    assert.doesNotMatch(JSON.stringify(failedRestart), /fixture-restart-failure/)
   } finally { await value.close() }
 })
 
-test('an account change followed by a query error never presents the previous account snapshot', async () => {
+test('email changes do not invalidate a source while its stable identity is unavailable', async () => {
   const value = await fixture()
   try {
     value.rpc.account = {type: 'chatgpt', email: 'first@example.invalid'}
     await value.service.connectCodex()
-    await value.service.linkCodex(value.id!, value.service.status().codex.sourceKey!)
+    const source = value.service.status().codex.sourceKey!
+    await value.service.linkCodex(value.id!, source)
+    const snapshot = value.service.status(value.id).current?.snapshot
     value.rpc.account = {type: 'chatgpt', email: 'second@example.invalid'}
     value.rpc.quota = new Error('fixture-rpc-error')
     await value.service.refresh()
     const status = value.service.status(value.id)
     assert.equal(status.codex.state, 'unavailable')
-    assert.equal(status.codex.snapshot, undefined)
-    assert.equal(status.current, undefined)
+    assert.deepEqual(status.current?.snapshot, snapshot)
+    assert.equal(status.current?.state, 'unavailable')
+    value.rpc.quota = rpcQuota
+    await value.service.connectCodex()
+    assert.equal(value.service.status().codex.sourceKey, source)
+    assert.equal(value.service.status(value.id).current?.state, 'ready')
+    value.rpc.quota = {...rpcQuota, accountId: 'fixture-source-new'}
+    await value.service.refresh()
+    assert.equal(value.service.status(value.id).current, undefined)
   } finally { await value.close() }
 })
 
@@ -362,3 +382,255 @@ for (const action of ['disconnect', 'reconnect'] as const) {
     } finally { resume.resolve(); await value.close() }
   })
 }
+
+async function multipleAccounts() {
+  const profile = await mkdtemp(join(tmpdir(), 'dsh-quota-multiple-'))
+  const store = new ConnectionStore(new MemoryCredentials(), profile, {async refresh(value) { return value }, async revoke() {}})
+  await store.connect(credential('a'))
+  const accountA = (await store.activeAccountId())!
+  const first = new FixtureRpc()
+  first.account = {type: 'chatgpt', email: 'first@example.invalid'}
+  first.quota = {...rpcQuota, accountId: 'fixture-source-a'}
+  const second = new FixtureRpc()
+  second.quota = {accountId: 'fixture-source-b', rateLimitsByLimitId: {codex: {limitId: 'codex',
+    primary: {usedPercent: 81, windowDurationMins: 300}}}}
+  const homes: string[] = []
+  const clients = new Map<string, FixtureRpc>()
+  const legacy = join(profile, 'chatgpt-siwc-codex-quota')
+  const dependencies = {
+    async start(home: string) {
+      homes.push(home)
+      if (home === legacy) return first
+      clients.set(home, second)
+      return second
+    },
+    async browser(_url: string) {},
+  }
+  const service = new QuotaService(store, profile, dependencies)
+  return {profile, store, service, accountA, first, second, clients, homes, legacy, dependencies,
+    async close() { await service.dispose(); await rm(profile, {recursive: true, force: true}) }}
+}
+
+async function readySecond(value: Awaited<ReturnType<typeof multipleAccounts>>) {
+  await value.service.addCodex()
+  assert.equal(value.service.status().codex.state, 'connecting')
+  const secondId = value.service.status().selectedAccountId!
+  value.second.account = {type: 'chatgpt', email: 'second@example.invalid'}
+  value.second.emit({loginId: 'fixture-login', success: true})
+  await settled(() => value.service.status().codex.state === 'ready')
+  return secondId
+}
+
+function usedPercent(value: ReturnType<QuotaService['status']>): number | undefined {
+  return value.current?.snapshot?.buckets[0]?.windows[0]?.usedPercent
+}
+
+test('separate quota logins follow each chat account and retain stable associations after restart', async () => {
+  const value = await multipleAccounts()
+  let restarted: QuotaService | undefined
+  try {
+    await value.service.connectCodex()
+    const firstId = value.service.status().selectedAccountId!
+    await value.service.linkCodex(value.accountA, value.service.status().codex.sourceKey!)
+    await value.store.connect(credential('b'))
+    const accountB = (await value.store.activeAccountId())!
+    const secondId = await readySecond(value)
+    assert.notEqual(firstId, secondId)
+    await value.service.linkCodex(accountB, value.service.status().codex.sourceKey!)
+    assert.equal(usedPercent(value.service.status(value.accountA)), 37)
+    assert.equal(usedPercent(value.service.status(accountB)), 81)
+    assert.equal(value.service.status(value.accountA).accounts?.find(account => account.id === firstId)?.linkedToCurrent, true)
+    assert.equal(value.service.status(accountB).accounts?.find(account => account.id === secondId)?.linkedToCurrent, true)
+    const secondHome = [...value.clients.keys()][0]
+    assert.equal(secondHome, join(value.profile, 'chatgpt-siwc-codex-quota-accounts', secondId))
+    for (const home of [value.legacy, secondHome]) {
+      await mkdir(home, {recursive: true})
+      await writeFile(join(home, 'auth.json'), '{}')
+    }
+    await value.service.dispose()
+    const first = new FixtureRpc()
+    first.account = value.first.account
+    first.quota = value.first.quota
+    const second = new FixtureRpc()
+    second.account = value.second.account
+    second.quota = value.second.quota
+    restarted = new QuotaService(value.store, value.profile, {
+      async start(home) { return home === value.legacy ? first : second }, async browser() {},
+    })
+    await restarted.refresh()
+    assert.equal(restarted.status().accounts?.length, 2)
+    assert.equal(usedPercent(restarted.status(value.accountA)), 37)
+    assert.equal(usedPercent(restarted.status(accountB)), 81)
+    await restarted.selectCodex(firstId)
+    assert.equal(usedPercent(restarted.status(accountB)), 81)
+  } finally { await restarted?.dispose(); await value.close() }
+})
+
+test('a quota login in progress does not prevent another bound source from refreshing', async () => {
+  const value = await multipleAccounts()
+  try {
+    await value.service.connectCodex()
+    await value.service.linkCodex(value.accountA, value.service.status().codex.sourceKey!)
+    await value.service.addCodex()
+    assert.equal(value.service.status().codex.state, 'connecting')
+    value.first.quota = {accountId: 'fixture-source-a', rateLimitsByLimitId: {codex: {limitId: 'codex',
+      primary: {usedPercent: 21, windowDurationMins: 300}}}}
+    await value.service.refresh()
+    assert.equal(usedPercent(value.service.status(value.accountA)), 21)
+    assert.equal(value.service.status().codex.state, 'connecting')
+    await value.service.cancelCodex()
+    assert.equal(usedPercent(value.service.status(value.accountA)), 21)
+  } finally { await value.close() }
+})
+
+test('logging out or changing one source leaves another source and its binding intact', async () => {
+  const value = await multipleAccounts()
+  try {
+    await value.service.connectCodex()
+    await value.service.linkCodex(value.accountA, value.service.status().codex.sourceKey!)
+    await value.store.connect(credential('b'))
+    const accountB = (await value.store.activeAccountId())!
+    const secondId = await readySecond(value)
+    await value.service.linkCodex(accountB, value.service.status().codex.sourceKey!)
+    value.second.quota = {accountId: 'fixture-source-new', rateLimitsByLimitId: {codex: {limitId: 'codex',
+      primary: {usedPercent: 60, windowDurationMins: 300}}}}
+    await value.service.refresh()
+    assert.equal(value.service.status(accountB).current, undefined)
+    assert.equal(usedPercent(value.service.status(value.accountA)), 37)
+    await value.service.linkCodex(accountB, value.service.status().codex.sourceKey!)
+    await value.service.removeCodex(secondId)
+    assert.equal(value.service.status(accountB).current, undefined)
+    assert.equal(usedPercent(value.service.status(value.accountA)), 37)
+    assert.equal(value.service.status().accounts?.length, 1)
+    assert.ok(value.second.calls.some(call => call.method === 'account/logout'))
+  } finally { await value.close() }
+})
+
+test('a duplicate source is rejected without disturbing the existing quota account', async () => {
+  const value = await multipleAccounts()
+  try {
+    await value.service.connectCodex()
+    await value.service.linkCodex(value.accountA, value.service.status().codex.sourceKey!)
+    value.second.quota = value.first.quota
+    await value.service.addCodex()
+    value.second.account = {type: 'chatgpt', email: 'second@example.invalid'}
+    value.second.emit({loginId: 'fixture-login', success: true})
+    await settled(() => value.service.status().codex.state === 'unavailable')
+    assert.match(value.service.status().codex.error!, /已连接/)
+    assert.equal(usedPercent(value.service.status(value.accountA)), 37)
+  } finally { await value.close() }
+})
+
+test('a remembered binding stays unavailable without a snapshot and can be removed offline', async () => {
+  const value = await multipleAccounts()
+  let restarted: QuotaService | undefined
+  try {
+    await value.service.connectCodex()
+    await value.service.linkCodex(value.accountA, value.service.status().codex.sourceKey!)
+    await value.store.connect(credential('b'))
+    const accountB = (await value.store.activeAccountId())!
+    const secondId = await readySecond(value)
+    await value.service.linkCodex(accountB, value.service.status().codex.sourceKey!)
+    await value.service.dispose()
+    restarted = new QuotaService(value.store, value.profile, value.dependencies)
+    await restarted.selectCodex(secondId)
+    assert.equal(restarted.status(value.accountA).current?.state, 'unavailable')
+    assert.equal(restarted.status(accountB).current?.state, 'unavailable')
+    assert.equal(restarted.status(accountB).current?.snapshot, undefined)
+    await restarted.removeCodex(secondId)
+    assert.equal(restarted.status(accountB).current, undefined)
+    assert.equal(restarted.status(value.accountA).current?.state, 'unavailable')
+    const saved = new QuotaLinks(value.profile)
+    await saved.load()
+    assert.equal(saved.matches(accountB, value.service.status(accountB).codex.sourceKey!), false)
+  } finally { await restarted?.dispose(); await value.close() }
+})
+
+test('a legacy login and its existing confirmed binding are restored without moving credentials', async () => {
+  const value = await fixture()
+  try {
+    const home = join(value.profile, 'chatgpt-siwc-codex-quota')
+    await mkdir(home, {recursive: true})
+    await writeFile(join(home, 'auth.json'), '{}')
+    const source = createHash('sha256').update(JSON.stringify(['codex', 'fixture-source-account'])).digest('hex')
+    await new QuotaLinks(value.profile).bind(value.id!, source, true)
+    value.rpc.account = {type: 'chatgpt', email: 'legacy@example.invalid'}
+    await value.service.refresh()
+    assert.equal(value.service.status(value.id).current?.state, 'ready')
+    assert.equal(value.service.status().selectedAccountId, 'legacy')
+    assert.equal(value.service.status().accounts?.length, 1)
+  } finally { await value.close() }
+})
+
+test('an omitted stable source ID retains the previous confirmed link until identity returns', async () => {
+  const value = await fixture()
+  try {
+    value.rpc.account = {type: 'chatgpt', email: 'first@example.invalid'}
+    await value.service.connectCodex()
+    await value.service.linkCodex(value.id!, value.service.status().codex.sourceKey!)
+    const previous = value.service.status(value.id).current?.snapshot
+    value.rpc.quota = {rateLimitsByLimitId: rpcQuota.rateLimitsByLimitId}
+    await value.service.refresh()
+    assert.equal(value.service.status(value.id).current?.state, 'unavailable')
+    assert.deepEqual(value.service.status(value.id).current?.snapshot, previous)
+    value.rpc.quota = rpcQuota
+    await value.service.refresh()
+    assert.equal(value.service.status(value.id).current?.state, 'ready')
+  } finally { await value.close() }
+})
+
+test('a delayed old quota response does not invalidate a newer source and its binding', async () => {
+  const value = await fixture()
+  const entered = gate<void>()
+  const delayed = gate<unknown>()
+  try {
+    value.rpc.account = {type: 'chatgpt', email: 'first@example.invalid'}
+    await value.service.connectCodex()
+    await value.service.linkCodex(value.id!, value.service.status().codex.sourceKey!)
+    const original = value.rpc.request.bind(value.rpc)
+    let delay = true
+    value.rpc.request = async (method, params) => {
+      if (method === 'account/rateLimits/read' && delay) {
+        delay = false
+        entered.resolve()
+        return delayed.promise
+      }
+      return original(method, params)
+    }
+    const reading = value.service.refresh()
+    await entered.promise
+    await value.service.disconnectCodex()
+    value.rpc.account = {type: 'chatgpt', email: 'second@example.invalid'}
+    value.rpc.quota = {...rpcQuota, accountId: 'fixture-new-source'}
+    await value.service.connectCodex()
+    const source = value.service.status().codex.sourceKey!
+    await value.service.linkCodex(value.id!, source)
+    const before = value.service.status(value.id)
+    delayed.resolve(rpcQuota)
+    await reading
+    assert.deepEqual(value.service.status(value.id), before)
+    const links = new QuotaLinks(value.profile)
+    await links.load()
+    assert.equal(links.matches(value.id!, source), true)
+  } finally { delayed.resolve(rpcQuota); await value.close() }
+})
+
+test('a delayed quota RPC startup failure cannot overwrite a cancelled connection', async () => {
+  const value = await fixture()
+  const entered = gate<void>()
+  let rejectStart!: (error: Error) => void
+  const startup = new Promise<FixtureRpc>((_resolve, reject) => { rejectStart = reject })
+  try {
+    const home = join(value.profile, 'chatgpt-siwc-codex-quota')
+    await mkdir(home, {recursive: true})
+    await writeFile(join(home, 'auth.json'), '{}')
+    value.dependencies.start = async () => { entered.resolve(); return startup }
+    const reading = value.service.refresh()
+    await entered.promise
+    await value.service.cancelCodex()
+    rejectStart(new Error('fixture-startup-failure'))
+    await reading
+    assert.equal(value.service.status().codex.state, 'disconnected')
+    assert.equal(value.service.status().codex.error, undefined)
+  } finally { rejectStart(new Error('fixture-startup-failure')); await value.close() }
+})

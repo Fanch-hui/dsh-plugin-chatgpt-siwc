@@ -10,6 +10,9 @@ export interface RemoteFace {
   linkCodexQuota(setting: QuotaLinkSetting): Promise<RemoteResult<SiwcStatus>>
   unlinkCodexQuota(accountId: string): Promise<RemoteResult<SiwcStatus>>
   refreshQuota(): Promise<RemoteResult<SiwcStatus>>
+  addCodexQuota(): Promise<RemoteResult<SiwcStatus>>
+  selectCodexQuota(accountId: string): Promise<RemoteResult<SiwcStatus>>
+  removeCodexQuota(accountId: string): Promise<RemoteResult<SiwcStatus>>
   connectCodexQuota(): Promise<RemoteResult<SiwcStatus>>
   cancelCodexQuota(): Promise<RemoteResult<SiwcStatus>>
   disconnectCodexQuota(): Promise<RemoteResult<SiwcStatus>>
@@ -51,7 +54,7 @@ export class SiwcController {
   private disposed = false
   private quotaWatchers = 0
   private stopQuotaWatch?: () => void
-  private quotaAccount?: string
+  private quotaWatchKey?: string
   private quotaRequestedAt?: number
   private mutationGeneration = 0
   private modelsRevision = 0
@@ -111,7 +114,8 @@ export class SiwcController {
     if (existing) return existing
     if (this.disposed || this.snapshot.pending) return Promise.resolve()
     const generation = this.mutationGeneration
-    const revisions = {models: this.modelsRevision, quota: this.quotaRevision}
+    const revisions = {models: this.modelsRevision, quota: this.quotaRevision,
+      quotaSource: this.snapshot.status && this.quotaWatchIdentity(this.snapshot.status)}
     const task = Promise.resolve().then(async () => {
       try {
         const result = await this.invoke(action)
@@ -132,18 +136,20 @@ export class SiwcController {
     })
     this.reads.set(action, task)
     if (action === 'refreshQuota' && this.snapshot.status) {
-      this.quotaAccount = this.quotaIdentity(this.snapshot.status)
+      this.quotaWatchKey = this.quotaWatchIdentity(this.snapshot.status)
       this.quotaRequestedAt = Date.now()
     }
     this.update({...this.snapshot, [pendingField[action]]: true, [errorField[action]]: undefined})
     return task
   }
 
-  private applyRead(action: ReadAction, result: SiwcStatus, revisions: {models: number; quota: number}): void {
+  private applyRead(action: ReadAction, result: SiwcStatus, revisions: {models: number; quota: number; quotaSource?: string}): void {
     let status = result
     const current = this.snapshot.status
     const sameAccount = current && this.quotaIdentity(current) === this.quotaIdentity(result)
     if (current && action !== 'status' && !sameAccount) return
+    if (current && action === 'refreshQuota' && revisions.quotaSource !== undefined
+      && this.quotaWatchIdentity(current) !== revisions.quotaSource) return
     if (current && action === 'refreshQuota') {
       status = {...current, quota: result.quota}
       this.quotaRevision++
@@ -159,7 +165,7 @@ export class SiwcController {
 
   private schedulePoll(): void {
     clearTimeout(this.timer)
-    if ((this.snapshot.status?.signingIn || this.snapshot.status?.quota?.codex.state === 'connecting') && !this.disposed) {
+    if ((this.snapshot.status?.signingIn || quotaConnecting(this.snapshot.status)) && !this.disposed) {
       this.timer = setTimeout(() => { void this.run('status') }, 1_500)
     }
   }
@@ -178,8 +184,8 @@ export class SiwcController {
       const {status, pending, quotaPending} = this.snapshot
       if (!status || pending || quotaPending || status.signingIn || status.quota?.codex.state === 'connecting') return
       if (typeof document !== 'undefined' && document.visibilityState !== 'visible') return
-      const sameAccount = this.quotaAccount === this.quotaIdentity(status)
-      if (sameAccount && this.quotaRequestedAt !== undefined && Date.now() - this.quotaRequestedAt < 60_000) return
+      const sameSource = this.quotaWatchKey === this.quotaWatchIdentity(status)
+      if (sameSource && this.quotaRequestedAt !== undefined && Date.now() - this.quotaRequestedAt < 60_000) return
       void this.run('refreshQuota')
     }
     const unsubscribe = this.subscribe(refresh)
@@ -199,6 +205,10 @@ export class SiwcController {
     return `${status.activeAccountId ?? 'signed-out'}:${status.authenticated}`
   }
 
+  private quotaWatchIdentity(status: SiwcStatus): string {
+    return `${this.quotaIdentity(status)}:${status.quota?.selectedAccountId ?? ''}:${status.quota?.codex.sourceKey ?? ''}`
+  }
+
   private invoke(action: StatusAction, value?: string | boolean | ContextWindowSetting | QuotaLinkSetting | CacheSettings): Promise<RemoteResult<SiwcStatus>> {
     if (action === 'setContextWindow') {
       if (!value || typeof value !== 'object' || !('contextWindow' in value)) throw new Error('上下文窗口设置格式错误。')
@@ -213,7 +223,7 @@ export class SiwcController {
       return this.remote.linkCodexQuota(value)
     }
     if (action === 'setBackgroundAllowed') return this.remote[action](value === true)
-    if (action === 'probeModel' || action === 'authorizeSession' || action === 'revokeSession' || action === 'switchAccount' || action === 'removeAccount' || action === 'reauthorizeAccount' || action === 'unlinkCodexQuota') {
+    if (action === 'probeModel' || action === 'authorizeSession' || action === 'revokeSession' || action === 'switchAccount' || action === 'removeAccount' || action === 'reauthorizeAccount' || action === 'unlinkCodexQuota' || action === 'selectCodexQuota' || action === 'removeCodexQuota') {
       return this.remote[action](String(value ?? ''))
     }
     return this.remote[action]()
@@ -223,4 +233,9 @@ export class SiwcController {
     this.snapshot = snapshot
     for (const listener of this.listeners) listener()
   }
+}
+
+function quotaConnecting(status: SiwcStatus | undefined): boolean {
+  const quota = status?.quota
+  return quota?.codex.state === 'connecting' || quota?.accounts?.some(account => account.state === 'connecting') === true
 }

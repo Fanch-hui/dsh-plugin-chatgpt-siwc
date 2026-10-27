@@ -44,7 +44,9 @@ test('package allowlist accepts runtime outputs and rejects private files and so
 
 test('repository audit rejects private data paths before reading their contents', () => {
   for (const path of ['.env', '.npmrc', '.dsh/config.yml', '.release/private.js',
-    'chatgpt-siwc-baselines.json', 'chatgpt-siwc-codex-quota/auth.json', 'lib/node_modules/secret.js']) {
+    'chatgpt-siwc-baselines.json', 'chatgpt-siwc-codex-quota/auth.json',
+    'chatgpt-siwc-quota-accounts.json', 'chatgpt-siwc-codex-quota-accounts/fixture/config.toml',
+    'lib/node_modules/secret.js']) {
     assert.throws(() => inspectFiles([path]), /forbidden release file/)
   }
   assert.throws(() => inspectFiles(['missing-release-input.js']), error => {

@@ -378,6 +378,9 @@ export class Controller implements SiwcRemote {
   async connectCodexQuota(): Promise<SiwcStatus> { await this.quota?.connectCodex(); return this.status() }
   async cancelCodexQuota(): Promise<SiwcStatus> { await this.quota?.cancelCodex(); return this.status() }
   async disconnectCodexQuota(): Promise<SiwcStatus> { await this.quota?.disconnectCodex(); return this.status() }
+  async addCodexQuota(): Promise<SiwcStatus> { await this.quota?.addCodex(); return this.status() }
+  async selectCodexQuota(id: string): Promise<SiwcStatus> { await this.quota?.selectCodex(id); return this.status() }
+  async removeCodexQuota(id: string): Promise<SiwcStatus> { await this.quota?.removeCodex(id); return this.status() }
   async dispose(): Promise<void> {
     this.lifetime.abort()
     await this.quota?.dispose()
