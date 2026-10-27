@@ -89,3 +89,7 @@ npm pack
 - [官方 SIWC 文档](https://developers.openai.com/siwc/token-sharing-open-source/sign-in)
 
 本项目为独立 DSH 插件。ChatGPT、OpenAI 和 DeepSeek 为各自所有者的名称。
+
+## 致谢
+
+感谢 [LINUX DO](https://linux.do/) 社区的交流与分享，也欢迎社区朋友体验、反馈和参与改进。
