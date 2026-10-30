@@ -265,7 +265,7 @@ export class RequestTrace {
       const isTextDone = (type === 'response.output_text.done' || type === 'response.refusal.done') && typeof doneText === 'string' && doneText.length > 0
       const isMessageDone = classification.category === 'item-done' && classification.emitsOutput && (event.item as Record<string, unknown> | undefined)?.type === 'message'
       const firstText = isTextDelta || isTextDone || isMessageDone
-      const firstContent = firstText || ((classification.category === 'delta' || classification.category === 'item-added' || classification.category === 'item-done') && classification.emitsOutput)
+      const firstContent = firstText || (classification.emitsOutput && !classification.terminal)
         || (type === 'response.reasoning_text.delta' && typeof event.delta === 'string' && event.delta.length > 0)
       if (firstContent) this.timing('first-content', now)
       if (firstText) this.timing('first-text', now)

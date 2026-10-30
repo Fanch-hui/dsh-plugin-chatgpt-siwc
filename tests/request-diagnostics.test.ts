@@ -411,6 +411,25 @@ test('preparing an unsent retry preserves the last sent prefix, including a defe
   }
 })
 
+test('completed reasoning summaries record first content without treating it as answer text', t => {
+  t.mock.timers.enable({apis: ['Date'], now: 1000})
+  for (const type of ['response.reasoning_summary_text.done', 'response.reasoning_summary_part.done']) {
+    const {records, diagnostics} = fixture()
+    const trace = diagnostics.begin(connection, options)
+    trace.timing('request-sent', 1000)
+    const event = (text: string) => type === 'response.reasoning_summary_text.done'
+      ? {type, text} : {type, part: {type: 'summary_text', text}}
+    t.mock.timers.setTime(1010)
+    trace.event(event(''))
+    t.mock.timers.setTime(1020)
+    trace.event(event('A completed reasoning summary.'))
+    trace.finish('completed')
+    assert.equal(records[0].timings?.firstContentAt, 1020, type)
+    assert.equal(records[0].timings?.firstContentMs, 20, type)
+    assert.equal(records[0].timings?.firstTextAt, undefined, type)
+  }
+})
+
 test('timings ignore empty items/deltas, isolate per-attempt arrival marks, and deduplicate terminal usage', t => {
   t.mock.timers.enable({apis: ['Date'], now: 1000})
   const {records, diagnostics} = fixture()

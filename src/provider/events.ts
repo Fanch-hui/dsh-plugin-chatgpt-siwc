@@ -2,6 +2,7 @@ import { isEmptyMessage, type WireItem } from './replay.js'
 
 export type WireEventCategory =
   | 'delta'
+  | 'reasoning-summary-done'
   | 'item-added'
   | 'item-done'
   | 'completed'
@@ -19,7 +20,8 @@ export function reasoningSummaryText(item: WireItem): string {
   if (!Array.isArray(item.summary)) return ''
   return (item.summary as WireItem[])
     .map(part => (typeof part?.text === 'string' ? part.text : ''))
-    .join('')
+    .filter(text => text.length > 0)
+    .join('\n\n')
 }
 
 function itemHasOutput(item: WireItem | undefined): boolean {
@@ -50,6 +52,12 @@ export function classifyWireEvent(event: Record<string, unknown>): WireEventClas
       emitsOutput: typeof event.delta === 'string' && event.delta.length > 0,
       terminal: false,
     }
+  }
+  if (type === 'response.reasoning_summary_text.done' || type === 'response.reasoning_summary_part.done') {
+    const text = type === 'response.reasoning_summary_text.done'
+      ? event.text
+      : (event.part as WireItem | undefined)?.text
+    return { category: 'reasoning-summary-done', emitsOutput: typeof text === 'string' && text.length > 0, terminal: false }
   }
   if (type === 'response.output_item.added') {
     const item = event.item as WireItem | undefined

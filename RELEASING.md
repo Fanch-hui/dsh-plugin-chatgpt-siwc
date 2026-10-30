@@ -1,6 +1,6 @@
 # 发布指南
 
-本文面向 `dsh-plugin-chatgpt-siwc` 的维护者。公开源码仓库为 [dsh-plugin-chatgpt-siwc](https://github.com/Fanch-hui/dsh-plugin-chatgpt-siwc)，npm 为公共分发渠道，当前版本为 `0.9.6`。用户在 DSH 插件管理页面输入包名安装；最低宿主版本为 `0.2.1-rc.3`，后续版本按实际接口变化适配。
+本文面向 `dsh-plugin-chatgpt-siwc` 的维护者。公开源码仓库为 [dsh-plugin-chatgpt-siwc](https://github.com/Fanch-hui/dsh-plugin-chatgpt-siwc)，npm 为公共分发渠道，当前版本为 `0.9.7`。用户在 DSH 插件管理页面输入包名安装；最低宿主版本为 `0.2.1-rc.3`，后续版本按实际接口变化适配。
 
 ## 发布前确认
 

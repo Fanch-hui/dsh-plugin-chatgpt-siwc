@@ -1,5 +1,6 @@
 import { LlmError, ToolCallId, type ContentBlock, type StreamChunk, type TokenUsage } from '@deepseek-ai/dsh-llm'
 import { classifyWireEvent, reasoningSummaryText } from './events.js'
+import { ReasoningSummary } from './reasoning-summary.js'
 import { fingerprint, isEmptyMessage, replayEnvelope, type EmptyOutput, type ReplayBlock, type ReplayContext, type WireItem } from './replay.js'
 import { resolveTool, type ToolIdentity } from './tools.js'
 import { providerError } from './errors.js'
@@ -59,6 +60,7 @@ export async function* parseEvents(
   const blocks: ActiveBlock[] = []
   const items = new Map<number, WireItem>()
   const completedReasoning = new Set<number>()
+  const summaries = new Map<number, ReasoningSummary>()
   let completed = false
   const open = (output: number, kind: 'text' | 'reasoning' | 'tool-call', part = 0): [ActiveBlock, StreamChunk[]] => {
     const normalizedPart = kind === 'reasoning' ? 0 : part
@@ -108,6 +110,23 @@ export async function* parseEvents(
     block.block.text += text
     return { type: block.block.type === 'text' ? 'text-delta' : 'reasoning-delta', index: block.index, text }
   }
+  const updateSummary = (output: number, index: number, text: string, done: boolean): StreamChunk[] => {
+    const summary = summaries.get(output) ?? new ReasoningSummary()
+    summaries.set(output, summary)
+    if (done) summary.complete(index, text)
+    else summary.append(index, text)
+    const chunks = flushReasoning(output)
+    const [block, start] = open(output, 'reasoning')
+    chunks.push(...start)
+    if (block.closed) throw new LlmError('ChatGPT 已结束的内容块收到增量。', 'SIWC_INVALID_STREAM')
+    const textToDisplay = summary.text
+    // Revised or reordered parts replace the display when the block ends.
+    if (block.block.type === 'reasoning' && textToDisplay.startsWith(block.block.text)) {
+      const remaining = textToDisplay.slice(block.block.text.length)
+      if (remaining) chunks.push(delta(block, remaining))
+    }
+    return chunks
+  }
   const finalizeItem = (output: number, item: WireItem, fromCompleted = false): StreamChunk[] => {
     const chunks: StreamChunk[] = []
     if (!['message', 'function_call', 'reasoning'].includes(String(item.type))) {
@@ -144,12 +163,23 @@ export async function* parseEvents(
     } else if (item.type === 'reasoning') {
       const summary = reasoningSummaryText(item)
       const existing = blocks.find(block => block.key === `${output}:reasoning:0`)
-      if (fromCompleted || existing || summary) {
+      const streamed = summaries.get(output)
+      if (fromCompleted || existing || summary || streamed?.text) {
         completedReasoning.delete(output)
         chunks.push(...flushReasoning(output))
         const [block, start] = open(output, 'reasoning')
         chunks.push(...start)
-        if (!block.closed && block.block.type === 'reasoning' && block.block.text === '' && summary) chunks.push(delta(block, summary))
+        if (!block.closed && block.block.type === 'reasoning') {
+          if (streamed) {
+            streamed.completeFromItem(item)
+            const textToDisplay = streamed.text
+            if (textToDisplay.startsWith(block.block.text)) {
+              const remaining = textToDisplay.slice(block.block.text.length)
+              if (remaining) chunks.push(delta(block, remaining))
+            }
+            block.block.text = textToDisplay
+          } else if (block.block.text === '' && summary) chunks.push(delta(block, summary))
+        }
       } else {
         completedReasoning.add(output)
       }
@@ -170,10 +200,12 @@ export async function* parseEvents(
       if (type === 'response.created' && !blocks.length) {
         items.clear()
         completedReasoning.clear()
+        summaries.clear()
       } else if (classification.category === 'item-added') {
         if (output === 0 && !blocks.length) {
           items.clear()
           completedReasoning.clear()
+          summaries.clear()
         }
         const item = event.item as WireItem
         items.set(output, item)
@@ -184,12 +216,22 @@ export async function* parseEvents(
         }
       } else if (classification.category === 'delta') {
         if (!classification.emitsOutput) continue
+        if (type === 'response.reasoning_summary_text.delta') {
+          const summaryIndex = typeof event.summary_index === 'number' ? event.summary_index : 0
+          yield* updateSummary(output, summaryIndex, event.delta as string, false)
+          continue
+        }
         const kind = type === 'response.function_call_arguments.delta' ? 'tool-call'
-          : type === 'response.reasoning_summary_text.delta' ? 'reasoning' : 'text'
+          : 'text'
         yield* flushReasoning(output)
         const [block, start] = open(output, kind, part)
         yield* start
         yield delta(block, event.delta as string)
+      } else if (classification.category === 'reasoning-summary-done') {
+        if (!classification.emitsOutput) continue
+        const summaryIndex = typeof event.summary_index === 'number' ? event.summary_index : 0
+        const text = type === 'response.reasoning_summary_text.done' ? event.text : (event.part as WireItem).text
+        yield* updateSummary(output, summaryIndex, text as string, true)
       } else if (classification.category === 'item-done') {
         yield* finalizeItem(output, event.item as WireItem)
       } else if (classification.category === 'failed') {
@@ -233,7 +275,11 @@ export async function* parseEvents(
     signal?.throwIfAborted()
     throw new LlmError('ChatGPT 响应流在完成前中断。', 'SIWC_STREAM_INTERRUPTED')
   } catch (error) {
-    for (const block of blocks) yield* close(block)
+    for (const block of blocks) {
+      const summary = summaries.get(block.output)
+      if (!block.closed && block.block.type === 'reasoning' && summary) block.block.text = summary.text
+      yield* close(block)
+    }
     throw error
   } finally {
     if (!completed) signal?.throwIfAborted()
