@@ -2,7 +2,7 @@
 
 通过官方 **Sign in with ChatGPT** 授权，将 ChatGPT 计划接入 DeepSeek Harness。支持文字、图片、工具调用、多账号及订阅额度展示。
 
-**当前版本：0.9.4** · 适配 DSH `0.2.1-rc.3` · MIT
+**当前版本：0.9.5** · 支持 DSH `0.2.1-rc.3` 及以上 · MIT
 
 ## 工作原理
 
@@ -71,7 +71,7 @@ dsh-plugin-chatgpt-siwc
 
 ## 开发
 
-需要 Node.js 22 或以上，DSH 依赖版本与兼容基线保持一致。
+需要 Node.js 22 或以上，开发与验证使用 DSH `0.2.1-rc.5`。兼容声明仅保留最低版本要求，后续版本按实际接口变化适配。
 
 ```sh
 npm ci
