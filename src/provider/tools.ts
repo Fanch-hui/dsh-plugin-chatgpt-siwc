@@ -9,6 +9,12 @@ export function toolIdentity(original: string): ToolIdentity {
   return { original, namespace: 'dsh', name: `${normalized}_${hash}` }
 }
 
+export function projectToolCallId(id: string): string {
+  if (/^[A-Za-z0-9_-]{1,64}$/.test(id)) return id
+  // Responses adapters can store call_id|item_id; retain the full source identity.
+  return `call_${createHash('sha256').update(id).digest('base64url')}`
+}
+
 function compareNames(left: string, right: string): number {
   if (left < right) return -1
   return left > right ? 1 : 0

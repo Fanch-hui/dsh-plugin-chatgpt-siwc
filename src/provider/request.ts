@@ -7,7 +7,7 @@ import {
   analyzeAssistantReplay, assistantReasoningEffort, emptyReplay,
   type ReplayContext, type ReplayDiagnosticReason, type ReplayDiagnosticStats, type WireItem,
 } from './replay.js'
-import { projectTools, toolIdentity, type ToolIdentity } from './tools.js'
+import { projectToolCallId, projectTools, toolIdentity, type ToolIdentity } from './tools.js'
 
 export type { ReplayDiagnosticReason, ReplayDiagnosticStats } from './replay.js'
 export type ResolveImage = (block: ImageBlock, signal?: AbortSignal) => Promise<string>
@@ -186,7 +186,7 @@ export async function buildRequest(
           projectedItems.push({
             order, partOrder, index: i,
             item: {
-              type: 'function_call', call_id: block.id,
+              type: 'function_call', call_id: projectToolCallId(block.id),
               name: identity.name, namespace: identity.namespace, arguments: block.arguments,
             },
           })
@@ -205,7 +205,7 @@ export async function buildRequest(
     }
     const converted = await content(message.content, image, options.signal, imageAccess)
     if (message.role === 'tool') {
-      input.push({ type: 'function_call_output', call_id: message.toolCallId, output: converted })
+      input.push({ type: 'function_call_output', call_id: projectToolCallId(message.toolCallId), output: converted })
     } else if (message.role === 'developer' && useToolAdditions && options.toolHistory) {
       if (converted.length) input.push({ role: 'developer', content: converted })
       const addedNames = message.content.flatMap(block => block.type === 'tool-addition' ? [block.toolName] : [])
