@@ -7,13 +7,14 @@ import vm from 'node:vm'
 import { Context, Service } from '@deepseek-ai/cordis'
 import Registry from '@deepseek-ai/dsh-typert-registry'
 import * as Gateway from '@deepseek-ai/dsh-api-gateway/client'
+import { z } from 'zod'
 import type { SiwcStatus } from '../src/api/types.js'
 
 const require = createRequire(import.meta.url)
 const status: SiwcStatus = {authenticated: false, signingIn: false, planEnabled: false, availability: 'ready',
   accounts: [], models: [], authorizedSessions: [], allowBackground: false,
   usage: {requests: 0, inputTokens: 0, outputTokens: 0, cachedTokens: 0}}
-type Registration = {name: string; key?: string; id?: string}
+type Registration = {name: string; key?: string; id?: string; inject?: (sessionId: string) => unknown}
 
 test('built client mounts the real remote namespace before registering its login settings and cleans up', async () => {
   execFileSync(process.execPath, ['scripts/build-client.mjs'], {cwd: new URL('../', import.meta.url)})
@@ -46,17 +47,37 @@ test('built client mounts the real remote namespace before registering its login
       return {ok: true, value: status}
     }},
   } as never)
+  const store = {getSnapshot: () => ({current: undefined}), subscribe: () => () => {}}
+  class ModelDirectories extends Service {
+    static inject = ['remote', 'remote.session']
+    constructor(ctx: Context) { super(ctx, 'modelDirectories') }
+    directoryFor(_sessionId: string) {
+      // Mirrors dsh-client-ui-model-selection's ModelDirectoryResolver.directoryFor, which reads
+      // this.ctx.remote.session through Cordis's traceable service proxy.
+      assert.ok((this.ctx as unknown as {remote: {session: unknown}}).remote.session)
+      return {store}
+    }
+  }
   try {
-    ctx.provide('modelDirectories', {directoryFor() { throw new Error('No fixture session mounted') }} as never)
     await ctx.plugin(Registry)
     await ctx.plugin(Gateway)
+    await (ctx.remote as unknown as {$mount(contribution: unknown): Promise<void>}).$mount({
+      package: 'fixture-session-remote',
+      descriptors: [{
+        id: 'fixture-session-remote#session/ping', service: 'session', namespace: 'session', method: 'ping',
+        invocation: {kind: 'direct'}, parameters: [], result: {mode: 'strict', typeSymbol: 'boolean', create: () => z.boolean()},
+      }],
+    })
+    await ctx.plugin(ModelDirectories)
     await ctx.plugin(Slots)
     const mounted = ctx.plugin(plugin)
     await mounted
     const settings = entries.get('plugins.bundle.config')
     assert.equal(settings?.options.key, 'dsh-plugin-chatgpt-siwc')
     assert.deepEqual([...entries.keys()], ['plugins.bundle.config', 'conversation.input.right'])
-    assert.equal(entries.get('conversation.input.right')?.options.id, 'chatgpt-siwc-quota')
+    const quotaSlot = entries.get('conversation.input.right')
+    assert.equal(quotaSlot?.options.id, 'chatgpt-siwc-quota')
+    assert.equal((quotaSlot?.options.inject?.('fixture-session') as {directory?: unknown})?.directory, store)
     const controller = settings!.component().props.controller
     await new Promise(resolve => setImmediate(resolve))
     assert.equal(controller.getSnapshot().status?.authenticated, false)

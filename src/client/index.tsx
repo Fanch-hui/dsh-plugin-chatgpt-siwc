@@ -20,7 +20,9 @@ export async function apply(ctx: Context): Promise<void> {
     ctx.slots.inject('plugins.bundle.config', () => ctx.slots.register({
       name: 'plugins.bundle.config', key: 'dsh-plugin-chatgpt-siwc',
     }, () => <Settings controller={controller} />))
-    ctx.inject(['modelDirectories'], ctx => {
+    // Cordis strips shadow context on nested service access inside ModelDirectoryResolver.directoryFor,
+    // so callers must also inject remote.session.
+    ctx.inject(['modelDirectories', 'remote.session'], ctx => {
       ctx.slots.inject('conversation.input.right', () => ctx.slots.register({
         name: 'conversation.input.right', id: 'chatgpt-siwc-quota',
         inject: sessionId => ({directory: ctx.modelDirectories.directoryFor(sessionId as SessionId).store}),
