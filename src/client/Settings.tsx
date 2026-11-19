@@ -155,7 +155,7 @@ function Models({ status, controller, busy, loading, error }: { status: SiwcStat
   return <Section title="模型" action={<Button size="sm" variant="ghost" disabled={busy || loading || !status.planEnabled} onClick={() => { void controller.run('refreshModels') }}>{loading ? '正在刷新…' : '刷新模型'}</Button>}>
     {error && <p role="status" style={hint}>{error}</p>}
     <p style={{ margin: '0 0 12px' }}>{status.models.length ? `${status.models.length} 个模型可用，聊天时在 DSH 模型选择器中选择。` : '暂无模型，请刷新模型目录。'}</p>
-    {status.availability === 'usage-limited' && <p role="status" style={{ ...hint, marginBottom: 12 }}>已达到用量限制，请在 ChatGPT 中查看额度，恢复后刷新模型。</p>}
+    {status.availability === 'usage-limited' && <p role="status" style={{ ...hint, marginBottom: 12 }}>已达到用量限制，请在 ChatGPT 中查看额度，恢复后继续对话。</p>}
     {status.availability === 'unavailable' && <p role="status" style={{ ...hint, marginBottom: 12 }}>连接暂时不可用，请刷新模型重试。</p>}
     <div style={row}>
       <label htmlFor="dsh-siwc-model">模型</label>

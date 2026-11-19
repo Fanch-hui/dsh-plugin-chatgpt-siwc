@@ -34,6 +34,7 @@ export interface ProviderDependencies {
   contextWindow?(connection: ProviderConnection, model: CatalogModel): Promise<number | undefined>
   sessionKind?(options: GenerateOptions): 'conversation' | 'subagent' | 'other'
   onUsage?(usage: TokenUsage, connection: ProviderConnection): void
+  onSuccess?(connection: ProviderConnection): void
   onError?(error: ProviderError, connection: ProviderConnection): void
   enhancements?: RequestEnhancements | ((options: GenerateOptions, connection: ProviderConnection) => RequestEnhancements | undefined)
   capabilities?: CapabilityRegistry
@@ -235,6 +236,7 @@ export class ChatGPTSiwcAdapter extends LlmAdapter {
                 this.capabilities.record(replayScope, options.model, cap, 'supported')
                 if (previous === 'unknown') await this.dependencies.onCapability?.(options.model, cap, 'supported', connection)
               }
+              this.dependencies.onSuccess?.(connection)
             } else {
               observedOutput = true
             }

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
-import { Button, useAnchoredPosition } from '@deepseek-ai/dsh-client-ui-primitives'
+import { Button } from '@deepseek-ai/dsh-client-ui-primitives'
 
 export function QuotaPopover({remaining, children}: {remaining?: number; children: ReactNode}) {
   const anchorRef = useRef<HTMLButtonElement>(null)
@@ -8,6 +8,7 @@ export function QuotaPopover({remaining, children}: {remaining?: number; childre
   const [open, setOpen] = useState(false)
   const [pinned, setPinned] = useState(false)
   const id = useId()
+  const anchorName = `--siwc-quota-${id.replaceAll(':', '')}`
   const close = useCallback(() => {
     clearTimeout(timer.current)
     setOpen(false)
@@ -20,7 +21,6 @@ export function QuotaPopover({remaining, children}: {remaining?: number; childre
     if (open) panel.showPopover()
     else if (panel.matches(':popover-open')) panel.hidePopover()
   }, [open])
-  const position = useAnchoredPosition({open, anchorRef, panelRef, side: 'top', align: 'end', gap: 8, margin: 12})
   useEffect(() => {
     if (!open) return
     const outside = (event: PointerEvent) => {
@@ -50,7 +50,7 @@ export function QuotaPopover({remaining, children}: {remaining?: number; childre
       onMouseLeave={leave}
       onFocus={event => { if (event.currentTarget.matches(':focus-visible')) { clearTimeout(timer.current); setOpen(true) } }}
       onClick={() => { clearTimeout(timer.current); if (pinned) close(); else { setPinned(true); setOpen(true) } }}
-      style={{width: 28, minWidth: 28, padding: 0, flexShrink: 0, color: 'var(--dsw-alias-label-secondary)'}}>
+      style={{anchorName, width: 28, minWidth: 28, padding: 0, flexShrink: 0, color: 'var(--dsw-alias-label-secondary)'}}>
       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
         <circle cx="12" cy="12" r="9" stroke="currentColor" strokeWidth="2" opacity="0.2" />
         {remaining !== undefined && <circle cx="12" cy="12" r="9" stroke="currentColor" strokeWidth="2"
@@ -60,8 +60,10 @@ export function QuotaPopover({remaining, children}: {remaining?: number; childre
     </Button>
     <div ref={panelRef} id={id} role="tooltip" {...{popover: 'manual'}}
       onMouseEnter={() => { clearTimeout(timer.current) }} onMouseLeave={leave}
-      style={{position: 'fixed', inset: 'auto', margin: 0, ...position, visibility: position ? 'visible' : 'hidden',
-        width: 244, maxWidth: 'calc(100vw - 24px)', maxHeight: 'calc(100vh - 24px)', overflowY: 'auto',
+      style={{position: 'fixed', positionAnchor: anchorName,
+        top: 'max(12px, var(--dsh-frame-overlay-top, 12px))', right: 'max(12px, anchor(right))',
+        bottom: 'calc(anchor(top) + 8px)', left: 12, margin: 0, alignSelf: 'safe end', justifySelf: 'safe end',
+        width: 244, height: 'fit-content', maxWidth: 'calc(100vw - 24px)', maxHeight: 'calc(100dvh - 24px)', overflowY: 'auto',
         boxSizing: 'border-box', padding: 16, border: 0, borderRadius: 12,
         background: 'var(--dsw-alias-bg-layer-1)', color: 'var(--dsw-alias-label-primary)',
         boxShadow: 'var(--dsw-elevation-panel)', fontSize: 12, lineHeight: 1.5}}>

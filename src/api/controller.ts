@@ -82,6 +82,11 @@ export class Controller implements SiwcRemote {
       connection: (signal, rejected) => this.connection(signal, rejected),
       authorize: (options, connection) => this.authorize(options, connection), image, imageAccess,
       onUsage: (usage, connection) => this.recordUsage(usage, connection),
+      onSuccess: connection => {
+        if (connection.signal?.aborted) return
+        this.availability = 'ready'
+        this.error = undefined
+      },
       onError: (error, connection) => { if (!connection.signal?.aborted) this.capture(error) },
       contextWindow: async (connection, model) => {
         connection.signal?.throwIfAborted()
@@ -121,9 +126,6 @@ export class Controller implements SiwcRemote {
     const state = await this.readState()
     if (!state.credential || connection.id !== connectionId(state)) {
       throw new LlmError('ChatGPT 连接已变更，请重新发起请求。', 'SIWC_CONNECTION_CHANGED')
-    }
-    if (this.availability === 'usage-limited') {
-      throw new LlmError('ChatGPT 计划用量已达上限，请管理用量后刷新模型。', 'QUOTA')
     }
     authorizeCall(state, options)
   }
