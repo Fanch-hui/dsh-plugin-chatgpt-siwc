@@ -5,6 +5,22 @@ import { AuthError, type Credential, type SiwcAuth } from '../src/auth/index.js'
 import { AuthProtocol } from '../src/auth/protocol.js'
 import { ConnectionStore } from '../src/storage/state.js'
 
+function assertJsonValue(value: unknown): void {
+  if (value === null || typeof value === 'boolean' || typeof value === 'string') return
+  if (typeof value === 'number') {
+    if (!Number.isFinite(value)) throw new TypeError('credentials-local: payload holds a value JSON cannot represent')
+    return
+  }
+  if (Array.isArray(value)) { for (const item of value) assertJsonValue(item); return }
+  if (typeof value === 'object') {
+    const proto = Object.getPrototypeOf(value)
+    if (proto !== Object.prototype && proto !== null) throw new TypeError('credentials-local: payload holds a value JSON cannot represent')
+    for (const entry of Object.values(value)) assertJsonValue(entry)
+    return
+  }
+  throw new TypeError('credentials-local: payload holds a value JSON cannot represent')
+}
+
 class SerializedCredentials implements Pick<CredentialProvider, 'readRecord' | 'modifyRecord'> {
   private records = new Map<CredentialKey, string>()
   private pending: Promise<unknown> = Promise.resolve()
@@ -16,7 +32,10 @@ class SerializedCredentials implements Pick<CredentialProvider, 'readRecord' | '
     mutate: (record: CredentialRecord | undefined) => Promise<CredentialRecord | undefined>) {
     const operation = this.pending.then(async () => {
       const record = await mutate(await this.readRecord(key))
-      if (record !== undefined) this.records.set(key, JSON.stringify(record))
+      if (record !== undefined) {
+        if (record.kind === 'grant') assertJsonValue(record.payload)
+        this.records.set(key, JSON.stringify(record))
+      }
       return this.readRecord(key)
     })
     this.pending = operation.catch(() => {})

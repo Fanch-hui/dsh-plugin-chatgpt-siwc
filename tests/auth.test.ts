@@ -13,6 +13,7 @@ async function fixture() {
   let nonce = '';
   let subject = 'fixture-subject';
   let tokenScope: string | undefined = 'openid profile email offline_access resource.invoke chatgpt.tokens.use.direct';
+  let includeOptional = true;
   let failToken = false;
   const requests: { path: string; form: URLSearchParams }[] = [];
   const transport: typeof fetch = async (input, init) => {
@@ -28,11 +29,11 @@ async function fixture() {
     if (url.pathname === '/revoke') return new Response('', { status: 200 });
     if (url.pathname !== '/api/accounts/oauth/token') throw new Error('Unexpected fixture URL');
     if (failToken) return Response.json({ error: 'invalid_grant', description: 'fixture-private-material' }, { status: 400 });
-    const jwt = await new SignJWT({ nonce, email: 'fixture@example.invalid' })
+    const jwt = await new SignJWT({ nonce, ...(includeOptional ? { email: 'fixture@example.invalid' } : {}) })
       .setProtectedHeader({ alg: 'RS256', kid: 'fixture' }).setIssuer(ISSUER).setAudience(clientId)
       .setSubject(subject).setIssuedAt().setExpirationTime('1h').sign(privateKey);
     return Response.json({ token_type: 'Bearer', access_token: 'fixture-access', refresh_token: 'fixture-refresh',
-      id_token: jwt, expires_in: 3600, scope: tokenScope, earliest_refresh_at: 1_800_000_000 });
+      id_token: jwt, expires_in: 3600, scope: tokenScope, ...(includeOptional ? { earliest_refresh_at: 1_800_000_000 } : {}) });
   };
   const auth = new SiwcAuth(transport);
   return {
@@ -40,6 +41,7 @@ async function fixture() {
     setNonce(value: string) { nonce = value; },
     setSubject(value: string) { subject = value; },
     setScope(value: string | undefined) { tokenScope = value; },
+    setIncludeOptional(value: boolean) { includeOptional = value; },
     failToken() { failToken = true; },
     async begin(registration?: Credential) {
       const attempt = await auth.beginSignIn({ hostId, registration });
@@ -174,6 +176,14 @@ test('endpoint errors expose safe codes without response details', async () => {
     assert.equal(error.message.includes('fixture-private-material'), false);
     return true;
   });
+});
+
+test('omitted optional OIDC and token fields are absent rather than undefined properties', async () => {
+  const f = await fixture();
+  f.setIncludeOptional(false);
+  const value = await login(f);
+  assert.equal(Object.hasOwn(value, 'displayEmail'), false);
+  assert.equal(Object.hasOwn(value, 'earliestRefreshAt'), false);
 });
 
 test('cancel and timeout reject completion and release the local listener', async () => {

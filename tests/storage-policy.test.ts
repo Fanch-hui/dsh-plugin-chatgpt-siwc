@@ -7,6 +7,28 @@ import { AuthError, type Credential, type SiwcAuth } from '../src/auth/index.js'
 import { ConnectionStore, type StoredState } from '../src/storage/state.js';
 import { authorizeCall } from '../src/policy/authorize.js';
 
+/** Matches dsh-credentials-local's strict JSON-value check (rejects undefined properties). */
+function assertJsonValue(value: unknown, path = 'payload'): void {
+  if (value === null || typeof value === 'boolean' || typeof value === 'string') return;
+  if (typeof value === 'number') {
+    if (!Number.isFinite(value)) throw new TypeError(`credentials-local: ${path} holds a value JSON cannot represent`);
+    return;
+  }
+  if (Array.isArray(value)) {
+    for (let index = 0; index < value.length; index++) assertJsonValue(value[index], `${path}[${index}]`);
+    return;
+  }
+  if (typeof value === 'object') {
+    const proto = Object.getPrototypeOf(value);
+    if (proto !== Object.prototype && proto !== null) {
+      throw new TypeError(`credentials-local: ${path} holds a value JSON cannot represent`);
+    }
+    for (const [key, entry] of Object.entries(value)) assertJsonValue(entry, `${path}.${key}`);
+    return;
+  }
+  throw new TypeError(`credentials-local: ${path} holds a value JSON cannot represent`);
+}
+
 /** Reproduces the provider's serialized transaction and JSON persistence boundary. */
 class SerializedProvider implements Pick<CredentialProvider, 'readRecord' | 'modifyRecord'> {
   private records = new Map<CredentialKey, string>();
@@ -27,7 +49,10 @@ class SerializedProvider implements Pick<CredentialProvider, 'readRecord' | 'mod
     await previous;
     try {
       const next = await mutate(await this.readRecord(key));
-      if (next !== undefined) this.records.set(key, JSON.stringify(next));
+      if (next !== undefined) {
+        if (next.kind === 'grant') assertJsonValue(next.payload, `record "${key}" payload`);
+        this.records.set(key, JSON.stringify(next));
+      }
       return await this.readRecord(key);
     } finally {
       release();
@@ -413,4 +438,75 @@ test('v2 accounts enable independent calls once and preserve later opt-out acros
   assert.equal((await restarted.read()).allowBackground, false);
   await restarted.connect(credential());
   assert.equal((await restarted.read()).allowBackground, false);
+});
+
+test('invalid grant, sign-out and removeAccount delete cleared fields instead of storing undefined', async () => {
+  const provider = new SerializedProvider();
+  const path = '/fixture/strict-json-clear';
+  const key = credentialKey('chatgpt-siwc', `profile-${createHash('sha256').update(path).digest('hex')}`);
+  const store = new ConnectionStore(provider, path, auth({
+    async refresh() { throw new AuthError('invalid_grant', '登录授权已失效，请重新登录。'); },
+  }));
+
+  // Sign-out on an empty store writes accounts.defaults without undefined or credential keys.
+  assert.equal(await store.signOut(), true);
+  const emptyRecord = await provider.readRecord(key);
+  assert.ok(emptyRecord?.kind === 'grant');
+  const emptyPayload = emptyRecord.payload as { defaults: Record<string, unknown> };
+  assert.equal(Object.hasOwn(emptyPayload.defaults, 'credential'), false);
+  assert.equal(Object.hasOwn(emptyPayload.defaults, 'registration'), false);
+
+  // Connect with explicit undefined optional fields and set cacheSettings with undefined ttl.
+  await store.connect(credential({
+    expiresAt: Date.now() - 1,
+    displayEmail: undefined,
+    earliestRefreshAt: undefined,
+  }));
+  const id = (await store.activeAccountId())!;
+  await store.setCacheSettings({ ttl: undefined, comparisonDiagnostics: true });
+  await store.recordCapability(id, 1, 'gpt-5', 'prompt_cache_options', 'supported', 2);
+  await store.update(state => { state.legacyConnectionId = `${id}:legacy`; });
+
+  // Path 1: renewConnection invalid_grant clears credential, legacyConnectionId and capabilities,
+  // and surfaces AuthError instead of a credentials-local storage TypeError.
+  await assert.rejects(store.connection(), (error: unknown) => {
+    assert.ok(error instanceof AuthError);
+    assert.equal(error.code, 'invalid_grant');
+    assert.equal(error.message, '登录授权已失效，请重新登录。');
+    return true;
+  });
+  let saved = await store.read();
+  assert.equal(saved.credential, undefined);
+  assert.equal(saved.legacyConnectionId, undefined);
+  assert.equal(saved.capabilities, undefined);
+  assert.deepEqual(saved.cacheSettings, { comparisonDiagnostics: true });
+  assert.equal(saved.registration?.issuedClientId, 'oaiapp_fixture');
+  await assert.rejects(store.connection(), { code: 'invalid_grant', message: '请先连接 ChatGPT。' });
+
+  // Path 2: signOut clears credential, legacyConnectionId and capabilities cleanly.
+  await store.connect(credential());
+  await store.recordCapability(id, 2, 'gpt-5', 'prompt_cache_options', 'supported', 2);
+  await store.update(state => { state.legacyConnectionId = `${id}:legacy-2`; });
+  assert.equal(await store.signOut(), true);
+  saved = await store.read();
+  assert.equal(saved.credential, undefined);
+  assert.equal(saved.legacyConnectionId, undefined);
+  assert.equal(saved.capabilities, undefined);
+
+  // Path 3: removeAccount clears credential, legacyConnectionId and capabilities cleanly.
+  await store.connect(credential());
+  await store.recordCapability(id, 3, 'gpt-5', 'prompt_cache_options', 'supported', 2);
+  await store.update(state => { state.legacyConnectionId = `${id}:legacy-3`; });
+  assert.equal(await store.removeAccount(id), true);
+  saved = await store.read();
+  assert.equal(saved.credential, undefined);
+  assert.equal(saved.legacyConnectionId, undefined);
+  assert.equal(saved.capabilities, undefined);
+
+  // Explicit undefined assignment in update() also deletes the key before persistence.
+  await store.connect(credential());
+  await store.update(state => { state.credential = undefined; state.cacheSettings = undefined; });
+  saved = await store.read();
+  assert.equal(saved.credential, undefined);
+  assert.equal(saved.cacheSettings, undefined);
 });

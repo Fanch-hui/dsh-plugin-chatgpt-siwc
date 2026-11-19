@@ -50,6 +50,17 @@ export type CacheSettings = z.infer<typeof cacheSettings>
 export function accountId(value: {issuer: string; subject: string; issuedClientId: string}): string {
   return createHash('sha256').update(JSON.stringify([value.issuer, value.subject, value.issuedClientId])).digest('hex')
 }
+export function stripUndefined<T>(value: T): T {
+  if (Array.isArray(value)) return value.map(item => stripUndefined(item)) as T
+  if (value !== null && typeof value === 'object') {
+    const clean: Record<string, unknown> = {}
+    for (const [key, entry] of Object.entries(value)) {
+      if (entry !== undefined) clean[key] = stripUndefined(entry)
+    }
+    return clean as T
+  }
+  return value
+}
 export function emptyPreferences(): z.infer<typeof preferences> {
   return {authorizedSessions: [], allowBackground: true, contextWindows: {},
     usage: {requests: 0, inputTokens: 0, outputTokens: 0, cachedTokens: 0}}

@@ -11,6 +11,22 @@ import { AuthError, SiwcAuth, type Credential, type SignInAttempt, type SignInOp
 import { DiagnosticsStore } from '../src/diagnostics/store.js'
 import { ConnectionStore, deriveReplayScope } from '../src/storage/state.js'
 
+function assertJsonValue(value: unknown): void {
+  if (value === null || typeof value === 'boolean' || typeof value === 'string') return
+  if (typeof value === 'number') {
+    if (!Number.isFinite(value)) throw new TypeError('credentials-local: payload holds a value JSON cannot represent')
+    return
+  }
+  if (Array.isArray(value)) { for (const item of value) assertJsonValue(item); return }
+  if (typeof value === 'object') {
+    const proto = Object.getPrototypeOf(value)
+    if (proto !== Object.prototype && proto !== null) throw new TypeError('credentials-local: payload holds a value JSON cannot represent')
+    for (const entry of Object.values(value)) assertJsonValue(entry)
+    return
+  }
+  throw new TypeError('credentials-local: payload holds a value JSON cannot represent')
+}
+
 class MemoryCredentials implements Pick<CredentialProvider, 'readRecord' | 'modifyRecord'> {
   private records = new Map<CredentialKey, string>()
   private transaction: Promise<unknown> = Promise.resolve()
@@ -21,7 +37,10 @@ class MemoryCredentials implements Pick<CredentialProvider, 'readRecord' | 'modi
   modifyRecord(key: CredentialKey, mutate: (value: CredentialRecord | undefined) => Promise<CredentialRecord | undefined>) {
     const operation = this.transaction.then(async () => {
       const next = await mutate(await this.readRecord(key))
-      if (next !== undefined) this.records.set(key, JSON.stringify(next))
+      if (next !== undefined) {
+        if (next.kind === 'grant') assertJsonValue(next.payload)
+        this.records.set(key, JSON.stringify(next))
+      }
       return this.readRecord(key)
     })
     this.transaction = operation.catch(() => {})

@@ -153,11 +153,16 @@ export function credentials(
       throw new AuthError('invalid_response', 'OpenAI 返回的续期时间无效。');
     }
   }
+  const displayEmail = typeof identity.email === 'string' ? identity.email : registration.displayEmail;
+  const refreshToken = token.refresh_token ?? previous?.refreshToken;
   return {
-    ...registration, schemaVersion: 1, subject: identity.sub!,
-    displayEmail: typeof identity.email === 'string' ? identity.email : registration.displayEmail,
-    accessToken: token.access_token, refreshToken: token.refresh_token ?? previous?.refreshToken,
+    issuer: registration.issuer, subject: identity.sub!,
+    issuedClientId: registration.issuedClientId, hostId: registration.hostId,
+    ...(displayEmail !== undefined ? { displayEmail } : {}),
+    schemaVersion: 1, accessToken: token.access_token,
+    ...(refreshToken !== undefined ? { refreshToken } : {}),
     idToken, grantedScopes: scope.split(/\s+/).filter(Boolean), receivedAt: now,
-    expiresAt: now + token.expires_in * 1000, earliestRefreshAt,
+    expiresAt: now + token.expires_in * 1000,
+    ...(earliestRefreshAt !== undefined ? { earliestRefreshAt } : {}),
   };
 }

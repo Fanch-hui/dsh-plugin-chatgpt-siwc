@@ -3,7 +3,7 @@ import { credentialKey, type CredentialProvider } from '@deepseek-ai/dsh-credent
 import { z } from 'zod'
 import { AuthError, SiwcAuth, type Credential, type Registration } from '../auth/index.js'
 
-import { accountId, cacheSettings, credential, decode, emptyPreferences, project, registration,
+import { accountId, cacheSettings, credential, decode, emptyPreferences, project, registration, stripUndefined,
   type AccountState, type CacheSettings, type CapabilityEntry, type CapabilityStatus, type StoredState, type Usage } from './accounts.js'
 export type { CacheSettings, CapabilityEntry, CapabilityStatus, StoredState } from './accounts.js'
 
@@ -120,7 +120,8 @@ export class ConnectionStore {
     return decode(await this.provider.modifyRecord(this.key, async record => {
       const state = decode(record)
       await mutate(state)
-      return {kind: 'grant', payload: state}
+      // DSH grant records require strict JSON values without undefined properties.
+      return {kind: 'grant', payload: stripUndefined(state)}
     }))
   }
   async read(): Promise<StoredState> { return project(await this.readAccounts()) }
@@ -130,9 +131,13 @@ export class ConnectionStore {
       await mutate(value)
       const {schemaVersion: _, revision, activeGeneration: _active, accountId: id, ...changed} = value
       accounts.revision = revision
-      const selected = accounts.accounts.find(account => account.id === id)
-      if (selected) Object.assign(selected, changed)
-      else accounts.defaults = changed
+      const index = accounts.accounts.findIndex(account => account.id === id)
+      if (index >= 0) {
+        accounts.accounts[index] = {id: accounts.accounts[index].id, ...changed}
+      } else {
+        const {registration: _registration, credential: _credential, ...defaults} = changed
+        accounts.defaults = defaults
+      }
     }))
   }
   async snapshot(): Promise<{state: StoredState; accounts: PublicAccount[]}> {
@@ -168,7 +173,10 @@ export class ConnectionStore {
         delete selected.capabilities
       }
       const {issuer, subject, issuedClientId, hostId, displayEmail} = parsed
-      selected.registration = registration.parse({issuer, subject, issuedClientId, hostId, displayEmail})
+      selected.registration = registration.parse({
+        issuer, subject, issuedClientId, hostId,
+        ...(displayEmail !== undefined ? {displayEmail} : {}),
+      })
       selected.credential = parsed
       state.activeAccountId = id
       state.revision++
@@ -218,7 +226,7 @@ export class ConnectionStore {
         try { await this.auth.revoke(selected.credential, AbortSignal.timeout(10_000)) }
         catch { revoked = false }
       }
-      selected.credential = undefined
+      delete selected.credential
       delete selected.legacyConnectionId
       delete selected.capabilities
       selected.authorizedSessions = []
@@ -282,7 +290,7 @@ export class ConnectionStore {
         if (temporary && usable(value, rejectedAccessToken)) return
         failure = error
         if (error instanceof AuthError && error.code === 'invalid_grant') {
-          state.credential = undefined
+          delete state.credential
           delete state.legacyConnectionId
           delete state.capabilities
           state.revision++
@@ -299,7 +307,7 @@ export class ConnectionStore {
         try { await this.auth.revoke(state.credential, AbortSignal.timeout(10_000)) }
         catch { revoked = false }
       }
-      state.credential = undefined
+      delete state.credential
       delete state.legacyConnectionId
       delete state.capabilities
       state.authorizedSessions = []
